@@ -431,6 +431,8 @@ fun String.convertInternalBlocks(): String {
             .addIsToStr("buildTypes", "debuggable")
             .addIsToStr("buildTypes", "minifyEnabled")
             .addIsToStr("buildTypes", "shrinkResources")
+            .addIsToStr("testOptions", "animationsDisabled")
+            .addIsToStr("unitTests", "includeAndroidResources")
 }
 
 fun String.addIsToStr(blockTitle: String, transform: String): String {
