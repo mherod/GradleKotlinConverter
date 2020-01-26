@@ -4,11 +4,10 @@ import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
 import java.io.File
-import java.io.IOException
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.system.exitProcess
-import kotlin.text.RegexOption.*
+import kotlin.text.RegexOption.DOT_MATCHES_ALL
 
 // Bernardo Ferrari
 // APACHE-2 License
@@ -133,12 +132,12 @@ fun String.convertArrayExpression(): String {
 // becomes
 // apply(plugin = "kotlin-android")
 fun String.convertPlugins(): String {
-    val pluginsExp = """apply plugin: (\S+)""".toRegex()
+    val pluginsExp = """apply (\w+): (\S+)""".toRegex()
 
     return this.replace(pluginsExp) {
-        val (pluginId) = it.destructured
+        val (type, pluginId) = it.destructured
         // it identifies the plugin id and rebuilds the line.
-        "apply(plugin = $pluginId)"
+        "apply($type = $pluginId)"
     }
 }
 
@@ -200,6 +199,23 @@ fun String.convertDependencies(): String {
 // signingConfig signingConfigs.release
 // becomes
 // signingConfig = signingConfigs.getByName("release")
+fun String.convertCompileToImplementation(): String {
+    val outerExp = "(compile|testCompile)(?!O).*\".*\"".toRegex()
+
+    return this.replace(outerExp) {
+
+        if ("testCompile" in it.value) {
+            it.value.replace("testCompile", "testImplementation")
+        } else {
+            it.value.replace("compile", "implementation")
+        }
+    }
+}
+
+
+// signingConfig signingConfigs.release
+// becomes
+// signingConfig = signingConfigs.getByName("release")
 fun String.convertSigningConfigBuildType(): String {
     val outerExp = "signingConfig.*signingConfigs.*".toRegex()
 
@@ -216,6 +232,11 @@ fun String.convertSigningConfigBuildType(): String {
 // buildTypes { named("release") }
 fun String.convertBuildTypes(): String = this.convertNestedTypes("buildTypes", "named")
 
+// sourceSets { test }
+// becomes
+// sourceSets { named("test") }
+fun String.convertSourceSets(): String = this.convertNestedTypes("sourceSets", "named")
+
 
 // sourceSets { test }
 // becomes
@@ -227,7 +248,6 @@ fun String.convertSourceSets(): String = this.convertNestedTypes("sourceSets", "
 // becomes
 // signingConfigs { register("release") }
 fun String.convertSigningConfigs(): String = this.convertNestedTypes("signingConfigs", "register")
-
 
 fun String.convertNestedTypes(buildTypes: String, named: String): String {
     return this.getExpressionBlock("$buildTypes\\s*\\{".toRegex()) { substring ->
@@ -301,17 +321,12 @@ fun String.convertMaven(): String {
 // compileSdkVersion(28)
 fun String.addParentheses(): String {
 
-    val sdkExp = "(compileSdkVersion|minSdkVersion|targetSdkVersion)\\s*\\d*".toRegex()
+    val sdkExp = "(compileSdkVersion|minSdkVersion|targetSdkVersion|java.srcDir)\\s*\\b(\\S+)\\b".toRegex()
 
     return this.replace(sdkExp) {
+        println(it.value)
         val split = it.value.split(" ")
-
-        // if there is more than one whitespace, the last().toIntOrNull() will find.
-        if (split.lastOrNull { it.toIntOrNull() != null } != null) {
-            "${split[0]}(${split.last()})"
-        } else {
-            it.value
-        }
+        "${split[0]}(${split.last()})"
     }
 }
 
@@ -339,7 +354,7 @@ fun String.addParenthesisToId(): String {
 fun String.addEquals(): String {
 
     val signing = "keyAlias|keyPassword|storeFile|storePassword"
-    val other = "multiDexEnabled|correctErrorTypes"
+    val other = "multiDexEnabled|correctErrorTypes|execution"
     val defaultConfig = "applicationId|versionCode|versionName|testInstrumentationRunner"
 
     val versionExp = "($defaultConfig|$signing|$other).*".toRegex()
@@ -357,16 +372,16 @@ fun String.addEquals(): String {
 }
 
 
-// proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+// consumerProguardFiles "consumer-rules.pro"
 // becomes
-// setProguardFiles(listOf(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+// consumerProguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
 fun String.convertProguardFiles(): String {
 
-    val proguardExp = "proguardFiles .*".toRegex()
+    val proguardExp = "(\\w*[pP]roguardFiles)\\s(.*)".toRegex()
 
     return this.replace(proguardExp) {
-        val isolatedArgs = it.value.replace("proguardFiles\\s*".toRegex(), "")
-        "setProguardFiles(listOf($isolatedArgs))"
+        val (method, args) = it.destructured
+        "$method($args)"
     }
 }
 
@@ -432,7 +447,7 @@ fun String.convertInternalBlocks(): String {
             .addIsToStr("buildTypes", "minifyEnabled")
             .addIsToStr("buildTypes", "shrinkResources")
             .addIsToStr("testOptions", "animationsDisabled")
-            .addIsToStr("unitTests", "includeAndroidResources")
+            .addIsToStr("unitTests.apply", "includeAndroidResources")
 }
 
 fun String.addIsToStr(blockTitle: String, transform: String): String {
@@ -499,9 +514,11 @@ fun String.convertExcludeClasspath(): String {
 
     return this.replace(fullLineExp) { isolatedLine ->
         val isolatedStr = innerExp.find(isolatedLine.value)?.value ?: ""
-        "configurations.classpath {\n" +
-                "    exclude(group = $isolatedStr)\n" +
-                "}"
+        """
+            |configurations.classpath {
+            |   exclude(group = $isolatedStr)
+            |}
+            |"""
     }
 }
 
@@ -525,7 +542,7 @@ fun String.convertJetBrainsKotlin(): String {
     val newText = this.replace(fullLineExp) { isolatedLine ->
 
         // drop first "-" and remove last "
-        val substring = (removeExp.find(isolatedLine.value)?.value ?: "").drop(1).replace("\"","")
+        val substring = (removeExp.find(isolatedLine.value)?.value ?: "").drop(1).replace("\"", "")
 
         val splittedSubstring = substring.split(":")
 
@@ -603,11 +620,13 @@ val convertedText = textToConvert
         .convertJavaCompatibility()
         .convertCleanTask()
         .convertProguardFiles()
-        .convertInternalBlocks()
         .convertInclude()
         .convertBuildTypes()
         .convertSourceSets()
         .convertSigningConfigs()
+        .replace("unitTests\\s+".toRegex(), "unitTests.apply")
+        .replace("(\\w){".toRegex()) { "${it.value} {" }
+        .convertInternalBlocks()
         .convertExcludeClasspath()
         .convertJetBrainsKotlin()
         .convertSigningConfigBuildType()
